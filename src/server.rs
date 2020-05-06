@@ -2,52 +2,61 @@ use crate::epoll::*;
 
 use std::collections::HashMap;
 use std::io::prelude::*;
-use std::net::TcpStream;
-use std::os::unix::io::AsRawFd;
-use std::os::unix::io::FromRawFd;
+
+struct State {
+    message: Vec<u8>,
+    stream: MyTcpStream,
+}
 
 #[test]
-fn server() {
+pub fn server() {
     let mut eloop = EventLoop::new();
     let mut listener = MyTCPListener::bind("127.0.0.1:7878");
-    let server = listener.0.as_raw_fd();
     let mut connections = HashMap::new();
-    eloop.register(listener.0.as_raw_fd(), ffi::EPOLLIN);
+
+    let mut counter = 0;
+    let mut next = || {
+        counter += 1;
+        counter
+    };
+    let server = next();
+    eloop.add(&listener, server, ffi::EPOLLIN);
 
     loop {
         let events = eloop.wait();
         for event in events {
-            if event.is_read_ready() && event.fd == server {
-                let (stream, _) = listener.0.accept().unwrap();
-                stream.set_nonblocking(true).unwrap();
-                eloop.register(stream.as_raw_fd(), ffi::EPOLLIN);
-                connections.insert(stream.as_raw_fd(), stream);
-            } else if event.is_read_ready() {
-                handle_read_event(&eloop, event.fd, &connections);
+            if event.is_read_ready() && event.token == server {
+                let stream = listener.accept();
+                let id = next();
+                eloop.add(&stream, id, ffi::EPOLLIN);
+                connections.insert(
+                    id,
+                    State {
+                        message: vec![0; 1024],
+                        stream: stream,
+                    },
+                );
             } else {
-                handle_write_event(&eloop, event.fd, &connections);
+                handle_socket_event(&eloop, event, &mut connections);
             }
         }
     }
-
-    //
-    //match listener.accept() {
-    //    Ok((_socket, addr)) => println!("new client: {:?}", addr),
-    //    Err(e) => println!("couldn't get client: {:?}", e),
-    //}
 }
 
-fn handle_read_event(eloop: &EventLoop, fd: i32, connections: &HashMap<i32, TcpStream>) {
-    let mut stream = connections.get(&fd).unwrap();
-    let mut buff: [u8; 1024] = [0; 1024];
-    stream.read(&mut buff).unwrap();
-    println!("{}", std::str::from_utf8(&buff).unwrap());
-    eloop.reregister(fd, ffi::EPOLLOOUT)
-}
-
-fn handle_write_event(eloop: &EventLoop, fd: i32, connections: &HashMap<i32, TcpStream>) {
-    let mut stream = connections.get(&fd).unwrap();
-    let mut message = b"boran";
-    stream.write(&message[..]).unwrap();
-    eloop.reregister(fd, ffi::EPOLLIN)
+fn handle_socket_event(
+    eloop: &EventLoop,
+    event: ffi::Event,
+    connections: &mut HashMap<i32, State>,
+) {
+    if event.is_read_ready() {
+        println!("boran");
+        let state = connections.get_mut(&event.token).unwrap();
+        state.stream.read(&mut state.message[0..1023]).unwrap();
+        println!("{}", std::str::from_utf8(&state.message).unwrap());
+        eloop.modify(&state.stream, event.token, ffi::EPOLLOOUT)
+    } else {
+        let mut state = connections.get_mut(&event.token).unwrap();
+        state.stream.write(&state.message).unwrap();
+        eloop.modify(&state.stream, event.token, ffi::EPOLLIN)
+    }
 }
