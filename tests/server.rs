@@ -1,7 +1,8 @@
-use crate::epoll::*;
+use rustio::epoll::*;
 
 use std::collections::HashMap;
 use std::io::prelude::*;
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 
 struct State {
     message: Vec<u8>,
@@ -20,7 +21,7 @@ pub fn server() {
         counter
     };
     let server = next();
-    eloop.add(&listener, server, ffi::EPOLLIN);
+    eloop.add(listener.as_raw_fd(), server, ffi::EPOLLIN);
 
     loop {
         let events = eloop.wait();
@@ -28,7 +29,7 @@ pub fn server() {
             if event.is_read_ready() && event.token == server {
                 let stream = listener.accept();
                 let id = next();
-                eloop.add(&stream, id, ffi::EPOLLIN);
+                eloop.add(stream.as_raw_fd(), id, ffi::EPOLLIN);
                 connections.insert(
                     id,
                     State {

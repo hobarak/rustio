@@ -38,7 +38,6 @@ pub mod ffi {
         }
     }
 }
-
 pub struct EventLoop {
     fd: i32,
 }
@@ -70,14 +69,13 @@ impl EventLoop {
         events
     }
 
-    pub fn add<F: AsRawFd>(&self, fd: &F, token: i32, flags: i32) {
+    pub fn add(&self, fd: i32, token: i32, flags: i32) {
         let mut event = ffi::Event {
             flags: flags,
             token: token,
         };
 
-        let res =
-            unsafe { ffi::epoll_ctl(self.fd, ffi::EPOLL_CTL_ADD, fd.as_raw_fd(), &mut event) };
+        let res = unsafe { ffi::epoll_ctl(self.fd, ffi::EPOLL_CTL_ADD, fd, &mut event) };
         if res < 0 {
             panic!(io::Error::last_os_error());
         }

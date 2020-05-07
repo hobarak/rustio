@@ -1,12 +1,13 @@
-use crate::epoll::*;
+use rustio::epoll::*;
 
 use std::io::prelude::*;
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 
 #[test]
 fn client() {
     let mut stream = MyTcpStream::connect("slowwly.robertomurray.co.uk:80");
     let mut eloop = EventLoop::new();
-    eloop.add(&stream, 1, ffi::EPOLLOOUT);
+    eloop.add(stream.as_raw_fd(), 1, ffi::EPOLLOOUT);
     let mut buff: [u8; 1024] = [0; 1024];
 
     loop {
