@@ -1,11 +1,7 @@
 use io::{Read, Write};
 use std::io;
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::{
-    future::Future,
-    net::{TcpListener, TcpStream, ToSocketAddrs},
-    task::Context,
-};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::os::unix::io::AsRawFd;
 
 pub mod ffi {
     pub const EPOLL_CTL_ADD: i32 = 1;
@@ -38,6 +34,7 @@ pub mod ffi {
         }
     }
 }
+
 pub struct EventLoop {
     fd: i32,
 }
@@ -51,37 +48,43 @@ impl Drop for EventLoop {
     }
 }
 
+type Result<T> = std::result::Result<T, std::io::Error>;
+
 impl EventLoop {
-    pub fn new() -> EventLoop {
+    pub fn new() -> Result<EventLoop> {
         let fd = unsafe { ffi::epoll_create(1) };
         if fd < 0 {
-            panic!(io::Error::last_os_error());
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(EventLoop { fd })
         }
-        EventLoop { fd }
     }
-    pub fn wait(&self) -> Vec<ffi::Event> {
+    pub fn wait(&self) -> Result<Vec<ffi::Event>> {
         let mut events = Vec::with_capacity(10);
-        let res = unsafe { ffi::epoll_wait(self.fd, events.as_mut_ptr(), 10, -1) };
+        let res = unsafe { ffi::epoll_wait(self.fd, events.as_mut_ptr(), 10, 3000) };
         if res < 0 {
-            panic!(io::Error::last_os_error());
-        };
-        unsafe { events.set_len(res as usize) };
-        events
+            Err(io::Error::last_os_error())
+        } else {
+            unsafe { events.set_len(res as usize) };
+            Ok(events)
+        }
     }
 
-    pub fn add(&self, fd: i32, token: i32, flags: i32) {
+    pub fn add(&self, fd: i32, token: i32, flags: i32) -> Result<()> {
         let mut event = ffi::Event {
             flags: flags,
             token: token,
         };
-
+        println!("{} {} {}", fd, token, flags);
         let res = unsafe { ffi::epoll_ctl(self.fd, ffi::EPOLL_CTL_ADD, fd, &mut event) };
         if res < 0 {
-            panic!(io::Error::last_os_error());
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
         }
     }
 
-    pub fn modify<F: AsRawFd>(&self, fd: &F, token: i32, flags: i32) {
+    pub fn modify<F: AsRawFd>(&self, fd: &F, token: i32, flags: i32) -> Result<()> {
         let mut event = ffi::Event {
             flags: flags,
             token: token,
@@ -90,11 +93,13 @@ impl EventLoop {
         let res =
             unsafe { ffi::epoll_ctl(self.fd, ffi::EPOLL_CTL_MOD, fd.as_raw_fd(), &mut event) };
         if res < 0 {
-            panic!(io::Error::last_os_error());
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
         }
     }
 
-    pub fn remove<F: AsRawFd>(&self, fd: &F) {
+    pub fn remove<F: AsRawFd>(&self, fd: &F) -> Result<()> {
         let res = unsafe {
             ffi::epoll_ctl(
                 self.fd,
@@ -104,18 +109,14 @@ impl EventLoop {
             )
         };
         if res < 0 {
-            panic!(io::Error::last_os_error());
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
         }
     }
 }
 
 pub struct MyTCPListener(pub TcpListener);
-
-impl AsRawFd for MyTCPListener {
-    fn as_raw_fd(&self) -> i32 {
-        self.0.as_raw_fd()
-    }
-}
 
 impl MyTCPListener {
     pub fn bind<A: ToSocketAddrs>(addr: A) -> MyTCPListener {
@@ -125,10 +126,10 @@ impl MyTCPListener {
             .expect("Cannot set non-blocking");
         MyTCPListener(listener)
     }
-    pub fn accept(&self) -> MyTcpStream {
-        let (stream, _) = self.0.accept().unwrap();
-        stream.set_nonblocking(true).unwrap();
-        MyTcpStream(stream)
+    pub fn accept(&self) -> Result<MyTcpStream> {
+        let (stream, _) = self.0.accept()?;
+        stream.set_nonblocking(true)?;
+        Ok(MyTcpStream(stream))
     }
 }
 
@@ -142,11 +143,6 @@ impl MyTcpStream {
     }
 }
 
-impl AsRawFd for MyTcpStream {
-    fn as_raw_fd(&self) -> i32 {
-        self.0.as_raw_fd()
-    }
-}
 impl Write for MyTcpStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.write(buf)
@@ -158,5 +154,17 @@ impl Write for MyTcpStream {
 impl Read for MyTcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.0.read(buf)
+    }
+}
+
+impl AsRawFd for MyTcpStream {
+    fn as_raw_fd(&self) -> i32 {
+        self.0.as_raw_fd()
+    }
+}
+
+impl AsRawFd for MyTCPListener {
+    fn as_raw_fd(&self) -> i32 {
+        self.0.as_raw_fd()
     }
 }
